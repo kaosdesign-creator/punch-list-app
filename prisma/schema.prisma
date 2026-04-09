@@ -7,13 +7,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum ProjectType {
+enum ProjectTypeEnum {
   RESTAURANT
   OFFICE
   RETAIL
   HOTEL
   WAREHOUSE
   RESIDENTIAL
+}
+
+model ProjectType {
+  id      String         @id @default(cuid())
+  name    ProjectTypeEnum
+  projects Project[]
 }
 
 enum PunchItemStatus {
@@ -51,12 +57,6 @@ model Company {
   createdAt   DateTime @default(now())
   
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  projects Project[]
-}
-
-model ProjectType {
-  id      String       @id @default(cuid())
-  name    ProjectType  @unique
   projects Project[]
 }
 
@@ -120,6 +120,7 @@ model PunchItem {
   areaId      String?
   description String?
   status      PunchItemStatus  @default(DRAFT)
+  itemNumber  Int              @default(0)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   
