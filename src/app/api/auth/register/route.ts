@@ -1,29 +1,21 @@
 import { NextResponse } from 'next/server'
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, ProjectTypeEnum } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 export async function POST(request: Request) {
-  let prisma: PrismaClient
-  
+  const prisma = new PrismaClient()
+
   try {
-    prisma = new PrismaClient()
-    
-    // Try to create tables if they don't exist - ignore errors
-    try {
-      await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "User" (
-        "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-        "username" TEXT UNIQUE NOT NULL,
-        "email" TEXT UNIQUE NOT NULL,
-        "passwordHash" TEXT NOT NULL,
-        "firstName" TEXT,
-        "lastName" TEXT,
-        "phone" TEXT,
-        "createdAt" TIMESTAMP DEFAULT NOW()
-      )`
-    } catch (e) { /* ignore */ }
-    
     // Create project types
-    const projectTypes = ['RESTAURANT', 'OFFICE', 'RETAIL', 'HOTEL', 'WAREHOUSE', 'RESIDENTIAL']
+    const projectTypes: ProjectTypeEnum[] = [
+      ProjectTypeEnum.RESTAURANT,
+      ProjectTypeEnum.OFFICE,
+      ProjectTypeEnum.RETAIL,
+      ProjectTypeEnum.HOTEL,
+      ProjectTypeEnum.WAREHOUSE,
+      ProjectTypeEnum.RESIDENTIAL
+    ]
+    
     for (const type of projectTypes) {
       try {
         await prisma.projectType.upsert({
@@ -34,7 +26,7 @@ export async function POST(request: Request) {
       } catch (e) { /* ignore - might already exist */ }
     }
   } catch (e) {
-    // Continue to registration
+    // Continue even if this fails
   }
 
   try {
