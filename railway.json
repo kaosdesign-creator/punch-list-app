@@ -1,0 +1,27 @@
+{
+  "name": "punch-list-app",
+  "version": 2,
+  "build": {
+    "builder": "nixpacks",
+    "config": {
+      "node_version": "20"
+    }
+  },
+  "routes": [
+    {
+      "path": "/",
+      "destination": "/api"
+    }
+  ],
+  "env": {
+    "DATABASE_URL": {
+      "required": true
+    },
+    "NEXTAUTH_SECRET": {
+      "required": true
+    },
+    "NEXTAUTH_URL": {
+      "required": false
+    }
+  }
+}
