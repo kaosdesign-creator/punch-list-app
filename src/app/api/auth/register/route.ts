@@ -1,33 +1,9 @@
 import { NextResponse } from 'next/server'
-import { PrismaClient, ProjectTypeEnum } from '@prisma/client'
+import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 export async function POST(request: Request) {
   const prisma = new PrismaClient()
-
-  try {
-    // Create project types
-    const projectTypes: ProjectTypeEnum[] = [
-      ProjectTypeEnum.RESTAURANT,
-      ProjectTypeEnum.OFFICE,
-      ProjectTypeEnum.RETAIL,
-      ProjectTypeEnum.HOTEL,
-      ProjectTypeEnum.WAREHOUSE,
-      ProjectTypeEnum.RESIDENTIAL
-    ]
-    
-    for (const type of projectTypes) {
-      try {
-        await prisma.projectType.upsert({
-          where: { id: type.toLowerCase() },
-          update: {},
-          create: { id: type.toLowerCase(), name: type },
-        })
-      } catch (e) { /* ignore - might already exist */ }
-    }
-  } catch (e) {
-    // Continue even if this fails
-  }
 
   try {
     const body = await request.json()
@@ -60,8 +36,8 @@ export async function POST(request: Request) {
     await prisma.$disconnect()
 
     return NextResponse.json({ id: user.id, username: user.username, email: user.email })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Registration error:', error)
-    return NextResponse.json({ error: 'Failed to create account' }, { status: 500 })
+    return NextResponse.json({ error: error.message || 'Failed to create account' }, { status: 500 })
   }
 }
