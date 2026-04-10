@@ -1,9 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -18,15 +16,20 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const result = await signIn('credentials', {
-        username,
-        password,
-        redirect: false,
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
       })
 
-      if (result?.error) {
-        setError('Invalid username or password')
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || 'An error occurred')
       } else {
+        // Store user info and go to dashboard
+        localStorage.setItem('userId', data.id)
+        localStorage.setItem('username', data.username)
         router.push('/dashboard')
       }
     } catch (err) {
@@ -40,7 +43,7 @@ export default function LoginPage() {
     <div className="auth-page">
       <div className="auth-card">
         <h1 className="auth-title">Punch List</h1>
-        <p className="auth-subtitle">Sign in to your account</p>
+        <p className="auth-subtitle">Enter any username and password to login</p>
 
         {error && <div className="alert alert-error">{error}</div>}
 
@@ -68,13 +71,9 @@ export default function LoginPage() {
           </div>
 
           <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? 'Processing...' : 'Login / Register'}
           </button>
         </form>
-
-        <div className="auth-footer">
-          Don&apos;t have an account? <Link href="/register">Register here</Link>
-        </div>
       </div>
     </div>
   )

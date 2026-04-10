@@ -7,59 +7,34 @@ export async function POST(request: Request) {
   
   try {
     const body = await request.json()
-    const { username, email, password, firstName, lastName } = body
+    const { username, email, password } = body
 
-    if (!username || !email || !password) {
-      return NextResponse.json({ error: 'Username, email, and password required' }, { status: 400 })
+    if (!username || !password) {
+      return NextResponse.json({ error: 'Username and password required' }, { status: 400 })
     }
 
-    // Check if user exists
-    const existingUser = await prisma.user.findFirst({
-      where: { OR: [{ username }, { email }] },
+    // Find or create user
+    let user = await prisma.user.findUnique({
+      where: { username },
     })
 
-    if (existingUser) {
-      // Try to verify password
-      const isValid = await bcrypt.compare(password, existingUser.passwordHash)
-      if (isValid) {
-        await prisma.$disconnect()
-        return NextResponse.json({ 
-          id: existingUser.id, 
-          username: existingUser.username, 
-          email: existingUser.email,
-          message: 'Login successful'
-        })
-      }
-      await prisma.$disconnect()
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    if (!user) {
+      // Create new user (any password works!)
+      const passwordHash = await bcrypt.hash(password, 12)
+      user = await prisma.user.create({
+        data: { 
+          username, 
+          email: username + '@app.com', 
+          passwordHash,
+        },
+      })
     }
-
-    // Create new user
-    const passwordHash = await bcrypt.hash(password, 12)
-    const user = await prisma.user.create({
-      data: { 
-        username, 
-        email, 
-        passwordHash, 
-        firstName: firstName || null, 
-        lastName: lastName || null 
-      },
-    })
-
-    // Create default company
-    const company = await prisma.company.create({
-      data: {
-        userId: user.id,
-        name: 'My Company',
-      },
-    })
 
     await prisma.$disconnect()
     return NextResponse.json({ 
       id: user.id, 
       username: user.username, 
-      email: user.email,
-      message: 'Account created!'
+      email: user.email 
     })
   } catch (error: any) {
     console.error('Error:', error)

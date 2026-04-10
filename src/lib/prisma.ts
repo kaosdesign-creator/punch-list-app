@@ -1,11 +1,8 @@
 import { PrismaClient } from '@prisma/client'
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined
+// Create new client for each request to avoid connection issues
+export function createPrisma() {
+  return new PrismaClient()
 }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient()
-
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+export const prisma = createPrisma()
