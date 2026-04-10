@@ -2,24 +2,33 @@ import { NextResponse } from 'next/server'
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
-export async function POST(request: Request) {
-  const prisma = new PrismaClient()
+// Disable prepared statements
+const prismaOptions = {
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL + "&statement_cache_size=0",
+    },
+  },
+}
+
+export async function POST() {
+  // Create fresh client per request
+  const prisma = new PrismaClient(prismaOptions)
   
   try {
-    const body = await request.json()
-    const { username, email, password } = body
+    const url = new URL(process.env.DATABASE_URL || '')
+    const body = await new Request(url).json()
+    const { username, password } = body
 
     if (!username || !password) {
       return NextResponse.json({ error: 'Username and password required' }, { status: 400 })
     }
 
-    // Find or create user
     let user = await prisma.user.findUnique({
       where: { username },
     })
 
     if (!user) {
-      // Create new user (any password works!)
       const passwordHash = await bcrypt.hash(password, 12)
       user = await prisma.user.create({
         data: { 
