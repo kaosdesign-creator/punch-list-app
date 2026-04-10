@@ -1,18 +1,12 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import { PrismaClient } from '@prisma/client'
 
 export async function GET() {
+  const prisma = new PrismaClient()
+  
   try {
-    const session = await getServerSession(authOptions)
-    
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
+    // Get all projects
     const projects = await prisma.project.findMany({
-      where: { userId: session.user.id },
       include: {
         projectType: true,
         company: true,
@@ -22,24 +16,22 @@ export async function GET() {
       },
       orderBy: { updatedAt: 'desc' },
     })
-
+    
+    await prisma.$disconnect()
     return NextResponse.json(projects)
   } catch (error) {
     console.error('Error fetching projects:', error)
+    await prisma.$disconnect()
     return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 })
   }
 }
 
 export async function POST(request: Request) {
+  const prisma = new PrismaClient()
+  
   try {
-    const session = await getServerSession(authOptions)
-    
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const body = await request.json()
-    const { name, clientName, clientAddress, projectNumber, projectTypeId, companyId } = body
+    const { name, clientName, clientAddress, projectNumber, projectTypeId, userId, companyId } = body
 
     if (!name || !projectTypeId) {
       return NextResponse.json(
@@ -48,18 +40,27 @@ export async function POST(request: Request) {
       )
     }
 
-    let company = await prisma.company.findFirst({
-      where: { userId: session.user.id }
-    })
-
-    if (!company && companyId) {
-      company = await prisma.company.findUnique({ where: { id: companyId } })
+    // Get or create user
+    let user = userId ? await prisma.user.findUnique({ where: { id: userId } }) : await prisma.user.findFirst()
+    
+    if (!user) {
+      // Create a default user if none exists
+      user = await prisma.user.create({
+        data: {
+          username: 'default',
+          email: 'default@example.com',
+          passwordHash: 'default',
+        },
+      })
     }
 
+    // Get or create company
+    let company = companyId ? await prisma.company.findUnique({ where: { id: companyId } }) : await prisma.company.findFirst({ where: { userId: user.id } })
+    
     if (!company) {
       company = await prisma.company.create({
         data: {
-          userId: session.user.id,
+          userId: user.id,
           name: 'My Company',
         },
       })
@@ -67,19 +68,13 @@ export async function POST(request: Request) {
 
     const project = await prisma.project.create({
       data: {
-        userId: session.user.id,
+        userId: user.id,
         companyId: company.id,
         name,
         clientName: clientName || null,
         clientAddress: clientAddress || null,
         projectNumber: projectNumber || null,
         projectTypeId,
-        admins: {
-          create: {
-            userId: session.user.id,
-            isPrimaryAdmin: true,
-          },
-        },
       },
       include: {
         projectType: true,
@@ -87,9 +82,11 @@ export async function POST(request: Request) {
       },
     })
 
+    await prisma.$disconnect()
     return NextResponse.json(project)
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating project:', error)
-    return NextResponse.json({ error: 'Failed to create project' }, { status: 500 })
+    await prisma.$disconnect()
+    return NextResponse.json({ error: error.message || 'Failed to create project' }, { status: 500 })
   }
 }
