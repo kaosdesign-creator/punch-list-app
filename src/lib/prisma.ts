@@ -4,13 +4,8 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-function createPrismaClient() {
-  const client = new PrismaClient()
-  // @ts-ignore - this is a workaround for Supabase connection pooling
-  client.$on('beforeExit', async () => {
-    await client.$disconnect()
-  })
-  return client
-}
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient()
 
-export const prisma = createPrismaClient()
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
