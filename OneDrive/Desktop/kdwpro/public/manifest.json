@@ -1,0 +1,15 @@
+{
+  "name": "KAOS PunchList Pro",
+  "short_name": "KAOS",
+  "description": "Restaurant construction punch list by Kaos Design Werks",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0A0A",
+  "theme_color": "#0A0A0A",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/favicon-32.png",       "sizes": "32x32",   "type": "image/png" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icon.png",             "sizes": "1024x1024","type": "image/png", "purpose": "any maskable" }
+  ]
+}

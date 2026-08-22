@@ -1,0 +1,5 @@
+/view/*         /index.html  200
+/collaborate/*  /index.html  200
+/privacy        /index.html  200
+/terms          /index.html  200
+/*              /index.html  200
