@@ -2020,6 +2020,7 @@ function CollaboratorProjectView({token, collab}){
   const [addForm,setAddForm]=useState(null);
   const [editItem,setEditItem]=useState(null);
   const [editForm,setEditForm]=useState({});
+  const [deletedPhotos,setDeletedPhotos]=useState([]);
   const [saving,setSaving]=useState(false);
   const [confirmDelete,setConfirmDelete]=useState(null);
 
@@ -2032,11 +2033,11 @@ function CollaboratorProjectView({token, collab}){
       try{
         const res=await fetch(`${SUPA_URL_C}/functions/v1/collaborator-write`,{
           method:"POST",
-          headers:{"Content-Type":"application/json"},
+          headers:{"Content-Type":"application/json",Authorization:`Bearer ${ANON_KEY_C}`,apikey:ANON_KEY_C},
           body:JSON.stringify({token,action,data}),
         });
-        if(!res.ok)throw new Error(`HTTP ${res.status}`);
-        const json=await res.json();
+        const json=await res.json().catch(()=>null);
+        if(!res.ok)throw new Error(json?.error||json?.message||`HTTP ${res.status}`);
         if(json.error)throw new Error(json.error);
         return json;
       }catch(e){
@@ -2076,23 +2077,78 @@ function CollaboratorProjectView({token, collab}){
     if(!addForm?.title?.trim()||saving)return;
     setSaving(true);
     try{
-      const{item}=await callWrite("add",{...addForm,list_type:listType});
-      setItems(prev=>[...prev,{...item,photos:[]}]);
+      const{photos,...itemData}=addForm;
+      const{item}=await callWrite("add",{...itemData,list_type:listType});
+      const validPhotos=(photos||[]).filter(Boolean);
+      const photoRows=[];
+      for(let i=0;i<validPhotos.length;i++){
+        try{
+          const{path}=await uploadPhoto(validPhotos[i].file,collab.project_id);
+          photoRows.push({item_id:item.id,storage_path:path,sort_order:i,is_primary:validPhotos[i].isPrimary||i===0});
+        }catch(photoErr){console.error("Photo upload failed:",photoErr.message);}
+      }
+      let savedPhotos=[];
+      if(photoRows.length>0){
+        const{data:inserted}=await sbC.from("photos").insert(photoRows).select();
+        savedPhotos=(inserted||[]).map(p=>({id:p.id,path:p.storage_path,url:`${SUPA_URL_C}/storage/v1/object/public/photos/${p.storage_path}`,isPrimary:p.is_primary||false}));
+      }
+      setItems(prev=>[...prev,{...item,photos:savedPhotos}]);
       setAddForm(null);
     }catch(e){alert("Failed to add: "+e.message);}
     setSaving(false);
   };
 
+  const addFormPhoto=(photo,idx)=>setAddForm(f=>{const photos=[...(f.photos||[])];photos[idx]=photo;return{...f,photos};});
+  const removeFormPhoto=idx=>setAddForm(f=>({...f,photos:(f.photos||[]).filter((_,i)=>i!==idx)}));
+  const setFormPrimaryPhoto=idx=>setAddForm(f=>({...f,photos:(f.photos||[]).map((p,i)=>p?{...p,isPrimary:i===idx}:p)}));
+
   const handleEdit=async()=>{
     if(!editItem||saving)return;
     setSaving(true);
     try{
-      const{item}=await callWrite("edit",{id:editItem.id,...editForm});
-      setItems(prev=>prev.map(i=>i.id===editItem.id?{...i,...item,photos:i.photos}:i));
+      const{photos,...itemData}=editForm;
+      const{item}=await callWrite("edit",{id:editItem.id,...itemData});
+
+      // Delete removed existing photos
+      await Promise.all(deletedPhotos.map(async dp=>{
+        await sbC.from("photos").delete().eq("id",dp.id);
+        await deletePhotoFile(dp.path);
+      }));
+
+      // Upload and insert any new photos
+      const newPhotos=(photos||[]).filter(p=>p&&!p.id&&p.file);
+      const uploadedRows=[];
+      for(let i=0;i<newPhotos.length;i++){
+        try{
+          const{path}=await uploadPhoto(newPhotos[i].file,collab.project_id);
+          uploadedRows.push({item_id:editItem.id,storage_path:path,sort_order:i,is_primary:newPhotos[i].isPrimary||false});
+        }catch(photoErr){console.error("Photo upload failed:",photoErr.message);}
+      }
+      let insertedPhotos=[];
+      if(uploadedRows.length>0){
+        const{data}=await sbC.from("photos").insert(uploadedRows).select();
+        insertedPhotos=(data||[]).map(p=>({id:p.id,path:p.storage_path,url:`${SUPA_URL_C}/storage/v1/object/public/photos/${p.storage_path}`,isPrimary:p.is_primary||false}));
+      }
+
+      // Persist primary flag changes on kept existing photos
+      const keptExisting=(photos||[]).filter(p=>p&&p.id);
+      await Promise.all(keptExisting.map(p=>sbC.from("photos").update({is_primary:p.isPrimary||false}).eq("id",p.id)));
+
+      const finalPhotos=[...keptExisting,...insertedPhotos];
+      setItems(prev=>prev.map(i=>i.id===editItem.id?{...i,...item,photos:finalPhotos}:i));
       setEditItem(null);
+      setDeletedPhotos([]);
     }catch(e){alert("Failed to save: "+e.message);}
     setSaving(false);
   };
+
+  const editFormPhoto=(photo,idx)=>setEditForm(f=>{const photos=[...(f.photos||[])];photos[idx]=photo;return{...f,photos};});
+  const removeEditFormPhoto=idx=>setEditForm(f=>{
+    const photo=(f.photos||[])[idx];
+    if(photo?.id)setDeletedPhotos(prev=>[...prev,{id:photo.id,path:photo.path}]);
+    return{...f,photos:(f.photos||[]).filter((_,i)=>i!==idx)};
+  });
+  const setEditFormPrimaryPhoto=idx=>setEditForm(f=>({...f,photos:(f.photos||[]).map((p,i)=>p?{...p,isPrimary:i===idx}:p)}));
 
   const handleDelete=async(itemId)=>{
     setSaving(true);
@@ -2172,8 +2228,11 @@ function CollaboratorProjectView({token, collab}){
           <div style={{background:"#fff",borderRadius:14,border:"1px solid #E5E7EB",padding:16,marginBottom:12}}>
             <div style={{fontSize:13,fontWeight:700,color:"#111827",marginBottom:12}}>New Item</div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Title *</div>
+              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Issue Title *</div>
                 <input value={addForm.title||""} onChange={e=>setAddForm(f=>({...f,title:e.target.value}))} placeholder="Describe the issue..." style={inp}/>
+              </div>
+              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Photos (up to 5)</div>
+                <PhotoGrid photos={addForm.photos||[]} onAdd={addFormPhoto} onRemove={removeFormPhoto} onSetPrimary={setFormPrimaryPhoto}/>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                 <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Area</div>
@@ -2182,20 +2241,31 @@ function CollaboratorProjectView({token, collab}){
                     {areas.map(a=><option key={a.id} value={a.name}>{a.name}</option>)}
                   </select>
                 </div>
+                <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Trade</div>
+                  <select value={addForm.trade||""} onChange={e=>setAddForm(f=>({...f,trade:e.target.value}))} style={{...inp,appearance:"none"}}>
+                    <option value="">Select trade...</option>
+                    {MASTER_TRADES.map(t=><option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Assigned To</div>
+                  <input value={addForm.assigned_to||""} onChange={e=>setAddForm(f=>({...f,assigned_to:e.target.value}))} placeholder="Sub or vendor..." style={inp}/>
+                </div>
                 <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Priority</div>
                   <select value={addForm.priority||"Medium"} onChange={e=>setAddForm(f=>({...f,priority:e.target.value}))} style={{...inp,appearance:"none"}}>
                     {["Low","Medium","High","Critical"].map(p=><option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
               </div>
-              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Notes</div>
+              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Comments / Notes</div>
                 <textarea value={addForm.comments||""} onChange={e=>setAddForm(f=>({...f,comments:e.target.value}))} rows={2} style={{...inp,resize:"vertical"}}/>
               </div>
               <div style={{display:"flex",gap:8}}>
                 <button onClick={()=>setAddForm(null)} style={{flex:1,padding:10,borderRadius:10,background:"#F4F6F8",border:"1px solid #E5E7EB",color:"#374151",fontWeight:600,fontSize:13,cursor:"pointer"}}>Cancel</button>
                 <button onClick={handleAdd} disabled={!addForm?.title?.trim()||saving}
                   style={{flex:2,padding:10,borderRadius:10,background:addForm?.title?.trim()&&!saving?"#455A64":"#E5E7EB",color:addForm?.title?.trim()&&!saving?"#fff":"#9CA3AF",fontWeight:700,fontSize:13,border:"none",cursor:"pointer"}}>
-                  {saving?"Saving...":"Add to List"}
+                  {saving?"Saving...":listType==="completion"?"Add to Completion List":"Add to Punch List"}
                 </button>
               </div>
             </div>
@@ -2204,7 +2274,7 @@ function CollaboratorProjectView({token, collab}){
 
         {/* Add button */}
         {collab.can_add&&addForm===null&&(
-          <button onClick={()=>setAddForm({title:"",area:"",priority:"Medium",comments:""})}
+          <button onClick={()=>setAddForm({title:"",area:"",trade:"",assigned_to:"",priority:"Medium",comments:"",photos:[]})}
             style={{width:"100%",padding:12,borderRadius:12,background:"#455A64",color:"#fff",fontWeight:700,fontSize:14,border:"none",cursor:"pointer",marginBottom:12}}>
             + Add Item
           </button>
@@ -2222,8 +2292,8 @@ function CollaboratorProjectView({token, collab}){
               <div key={item.id} style={{background:"#fff",borderRadius:14,border:"1px solid #E5E7EB",overflow:"hidden"}}>
                 <div style={{display:"flex"}}>
                   {firstPhoto
-                    ?<img src={firstPhoto.url} alt="" style={{width:80,height:80,objectFit:"cover",flexShrink:0}}/>
-                    :<div style={{width:80,height:80,background:"#F4F6F8",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📋</div>
+                    ?<img src={firstPhoto.url} alt="" style={{width:88,height:88,objectFit:"cover",flexShrink:0}}/>
+                    :<div style={{width:88,height:88,background:"#F4F6F8",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📋</div>
                   }
                   <div style={{flex:1,padding:"10px 12px",minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap"}}>
@@ -2235,10 +2305,12 @@ function CollaboratorProjectView({token, collab}){
                     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                       {item.area&&<span style={{fontSize:11,color:"#6B7280"}}>📍 {item.area}</span>}
                       {item.trade&&<span style={{fontSize:11,color:"#6B7280"}}>🔧 {item.trade}</span>}
+                      {item.assigned_to&&<span style={{fontSize:11,color:"#6B7280"}}>👤 {item.assigned_to}</span>}
+                      {item.photos?.length>0&&<span style={{fontSize:11,color:"#6B7280"}}>📷 {item.photos.length}</span>}
                     </div>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-around",padding:"8px 10px",gap:4,flexShrink:0}}>
-                    {collab.can_edit&&<button onClick={()=>{setEditItem(item);setEditForm({title:item.title,area:item.area||"",trade:item.trade||"",priority:item.priority||"Medium",comments:item.comments||""}); }} style={{background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",padding:4,display:"flex"}}><Pencil size={14}/></button>}
+                    {collab.can_edit&&<button onClick={()=>{setEditItem(item);setEditForm({title:item.title,area:item.area||"",trade:item.trade||"",assigned_to:item.assigned_to||item.assignedTo||"",priority:item.priority||"Medium",comments:item.comments||"",photos:(item.photos||[]).map(p=>p?{...p}:p)});setDeletedPhotos([]); }} style={{background:"none",border:"none",cursor:"pointer",color:"#9CA3AF",padding:4,display:"flex"}}><Pencil size={14}/></button>}
                     {collab.can_delete&&<button onClick={()=>setConfirmDelete(item.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#DC2626",padding:4,display:"flex"}}><Trash2 size={14}/></button>}
                   </div>
                 </div>
@@ -2268,8 +2340,11 @@ function CollaboratorProjectView({token, collab}){
               <button onClick={()=>setEditItem(null)} style={{background:"none",border:"none",cursor:"pointer",color:"#9CA3AF"}}><X size={20}/></button>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
-              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Title</div>
+              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Issue Title</div>
                 <input value={editForm.title||""} onChange={e=>setEditForm(f=>({...f,title:e.target.value}))} style={inp}/>
+              </div>
+              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Photos (up to 5)</div>
+                <PhotoGrid photos={editForm.photos||[]} onAdd={editFormPhoto} onRemove={removeEditFormPhoto} onSetPrimary={setEditFormPrimaryPhoto}/>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                 <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Area</div>
@@ -2278,13 +2353,24 @@ function CollaboratorProjectView({token, collab}){
                     {areas.map(a=><option key={a.id} value={a.name}>{a.name}</option>)}
                   </select>
                 </div>
+                <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Trade</div>
+                  <select value={editForm.trade||""} onChange={e=>setEditForm(f=>({...f,trade:e.target.value}))} style={{...inp,appearance:"none"}}>
+                    <option value="">Select trade...</option>
+                    {MASTER_TRADES.map(t=><option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Assigned To</div>
+                  <input value={editForm.assigned_to||""} onChange={e=>setEditForm(f=>({...f,assigned_to:e.target.value}))} placeholder="Sub or vendor..." style={inp}/>
+                </div>
                 <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Priority</div>
                   <select value={editForm.priority||"Medium"} onChange={e=>setEditForm(f=>({...f,priority:e.target.value}))} style={{...inp,appearance:"none"}}>
                     {["Low","Medium","High","Critical"].map(p=><option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
               </div>
-              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Notes</div>
+              <div><div style={{fontSize:11,color:"#6B7280",marginBottom:4,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Comments / Notes</div>
                 <textarea value={editForm.comments||""} onChange={e=>setEditForm(f=>({...f,comments:e.target.value}))} rows={3} style={{...inp,resize:"vertical"}}/>
               </div>
               <button onClick={handleEdit} disabled={saving} style={{width:"100%",padding:13,borderRadius:12,background:saving?"#E5E7EB":"#455A64",color:saving?"#9CA3AF":"#fff",fontWeight:700,fontSize:14,border:"none",cursor:"pointer"}}>
@@ -3225,7 +3311,7 @@ function MainApp({user,onLogout}){
       setProjItems((data||[]).map(item=>({
         id:item.id,num:item.num,title:item.title,trade:item.trade||"",
         area:item.area||"",assignedTo:item.assigned_to||"",priority:item.priority||"Medium",
-        status:item.status||"open",comments:item.comments||"",
+        status:item.status||"open",comments:item.comments||"",list_type:item.list_type||"punch",
         photos:(item.photos||[]).sort((a,b)=>a.sort_order-b.sort_order).map(p=>({id:p.id,path:p.storage_path,url:photoUrl(p.storage_path),isPrimary:p.is_primary||false})),
       })));
     }
@@ -3247,6 +3333,10 @@ function MainApp({user,onLogout}){
   const listItems=projItems.filter(i=>(i.list_type||"punch")===listType);
   const stats={open:listItems.filter(i=>i.status==="open").length,pending:listItems.filter(i=>i.status==="pending").length,accepted:listItems.filter(i=>i.status==="accepted").length,total:listItems.length};
   const pct=stats.total>0?Math.round((stats.accepted/stats.total)*100):0;
+  // Preview tab has its own List/Status toggle, independent of the main issues/completion tab
+  const previewListItems=projItems.filter(i=>(i.list_type||"punch")===previewListType);
+  const previewItems=previewListItems.filter(i=>previewStatus==="all"||i.status===previewStatus);
+  const previewStats={open:previewListItems.filter(i=>i.status==="open").length,pending:previewListItems.filter(i=>i.status==="pending").length,accepted:previewListItems.filter(i=>i.status==="accepted").length,total:previewListItems.length};
   const filteredProjects=projects.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||(p.clientName||"").toLowerCase().includes(search.toLowerCase()));
 
   const handleCreate=proj=>{setProjects(prev=>[proj,...prev]);setDashTab("projects");setView("dashboard");};
@@ -3302,7 +3392,7 @@ function MainApp({user,onLogout}){
           await sb.from("photos").insert(newPhotos.map((p,i)=>({item_id:editId,storage_path:p.path,sort_order:p.sortOrder??i,is_primary:p.isPrimary||false})));
         }
         // Update local state
-        const updatedItem={id:editId,num:projItems.find(i=>i.id===editId)?.num,title:form.title,trade:form.trade,area:form.area,assignedTo:form.assignedTo,priority:form.priority,status:form.status,comments:form.comments,photos:finalPhotos.map(p=>({id:p.id,path:p.path,url:p.url,isPrimary:p.isPrimary||false}))};
+        const updatedItem={id:editId,num:projItems.find(i=>i.id===editId)?.num,title:form.title,trade:form.trade,area:form.area,assignedTo:form.assignedTo,priority:form.priority,status:form.status,comments:form.comments,list_type:listType,photos:finalPhotos.map(p=>({id:p.id,path:p.path,url:p.url,isPrimary:p.isPrimary||false}))};
         setProjItems(prev=>prev.map(i=>i.id===editId?updatedItem:i));
       }else{
         // Create new item
@@ -3421,9 +3511,9 @@ function MainApp({user,onLogout}){
 
   const DarkHeader=({title,subtitle,onBack,right})=>(
     <div style={{background:D.bg0,borderBottom:`1px solid ${D.b1}`,position:"sticky",top:0,zIndex:50}}>
-      <div style={{display:"flex",alignItems:"center",height:60,padding:"0 20px"}}>
+      <div style={{position:"relative",display:"flex",alignItems:"center",height:60,padding:"0 20px"}}>
         {/* LEFT — KAOS branding pinned to far left — clickable → dashboard */}
-        <div onClick={()=>setView("dashboard")} style={{display:"flex",alignItems:"center",gap:9,flexShrink:0,cursor:"pointer"}}>
+        <div onClick={()=>setView("dashboard")} style={{display:"flex",alignItems:"center",gap:9,flexShrink:0,cursor:"pointer",zIndex:1}}>
           <div style={{width:34,height:34,borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(180,120,60,0.3)"}}>
             <img src="/icon.png" alt="KAOS" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           </div>
@@ -3432,16 +3522,16 @@ function MainApp({user,onLogout}){
             <div style={{fontSize:8,color:D.t3,fontWeight:500,letterSpacing:"0.12em",textTransform:"uppercase"}}>PunchList Pro</div>
           </div>
         </div>
-        {/* CENTER — back arrow + title, truly centered */}
-        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,minWidth:0,padding:"0 12px"}}>
+        {/* CENTER — back arrow + title, absolutely centered on the bar itself so it isn't skewed by unequal left/right column widths */}
+        <div style={{position:"absolute",left:"50%",top:"50%",transform:"translate(-50%,-50%)",display:"flex",alignItems:"center",gap:6,maxWidth:"calc(100% - 220px)"}}>
           {onBack&&<button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:D.t3,display:"flex",flexShrink:0,padding:4,borderRadius:8}}><ArrowLeft size={18}/></button>}
-          <div style={{textAlign:"center",minWidth:0}}>
+          <div style={{textAlign:"center",minWidth:0,overflow:"hidden"}}>
             <div style={{fontSize:14,fontWeight:700,color:D.t1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{title}</div>
             {subtitle&&<div style={{fontSize:10,color:D.t3,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subtitle}</div>}
           </div>
         </div>
         {/* RIGHT — action slot, pinned to far right */}
-        <div style={{flexShrink:0,minWidth:34*2+9}}>
+        <div style={{flexShrink:0,minWidth:34*2+9,marginLeft:"auto",zIndex:1}}>
           {right&&<div style={{display:"flex",justifyContent:"flex-end"}}>{right}</div>}
         </div>
       </div>
@@ -3920,12 +4010,12 @@ function MainApp({user,onLogout}){
               <div style={{fontSize:20,fontWeight:800,color:D.t1}}>{proj.name}</div>
               {proj.clientName&&<div style={{fontSize:13,color:D.t3,marginTop:2}}>Client: {proj.clientName}</div>}
               <div style={{display:"flex",gap:16,marginTop:12}}>
-                {[["Open",stats.open,D.red],["Pending",stats.pending,D.yellow],["Accepted",stats.accepted,D.green],["Total",stats.total,D.t1]].map(([l,v,col])=>(
+                {[["Open",previewStats.open,D.red],["Pending",previewStats.pending,D.yellow],["Accepted",previewStats.accepted,D.green],["Total",previewStats.total,D.t1]].map(([l,v,col])=>(
                   <div key={l} style={{textAlign:"center"}}><div style={{fontSize:20,fontWeight:800,color:col}}>{v}</div><div style={{fontSize:10,color:D.t3,textTransform:"uppercase"}}>{l}</div></div>
                 ))}
               </div>
             </div>
-            {projItems.map(item=>(
+            {previewItems.map(item=>(
               <div key={item.id} style={{borderBottom:`1px solid ${D.b1}`,paddingBottom:12,marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
                   <span style={{fontSize:12,fontWeight:800,color:D.ac}}>#{item.num}</span><StatusBadge status={item.status}/><PriBadge priority={item.priority}/>
