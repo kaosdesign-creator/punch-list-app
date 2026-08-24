@@ -75,20 +75,20 @@ const uploadClientLogo = async (file, userId) => {
   return { path, url: photoUrl(path) };
 };
 
-/* ─── SMS NOTIFICATIONS ──────────────────────────────── */
+/* ─── EMAIL NOTIFICATIONS ────────────────────────────── */
 // Non-blocking best-effort — never throws, never blocks the caller.
 // Fires for owner-initiated writes only; collaborator-initiated add/closeout
 // trigger this server-side from the collaborator-write edge function instead,
 // so both paths are covered without duplicating client-side call sites.
-const sendSmsNotification = async (projectId, itemTitle, action) => {
+const sendEmailNotification = async (projectId, itemTitle, action) => {
   try {
-    await fetch("https://rnfpfyaktfvfzqxttowc.supabase.co/functions/v1/send-sms", {
+    await fetch("https://rnfpfyaktfvfzqxttowc.supabase.co/functions/v1/send-notification-email", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPA_KEY}`, apikey: SUPA_KEY },
       body: JSON.stringify({ projectId, itemTitle, action }),
     });
   } catch (e) {
-    console.log("SMS notification failed silently:", e.message);
+    console.log("Email notification failed silently:", e.message);
   }
 };
 
@@ -473,13 +473,13 @@ function CollaboratorManager({projId,user}){
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8,paddingTop:8,borderTop:`1px solid ${D.b1}`}}>
-            <div style={{fontSize:12,color:D.t2}}>📱 Text notifications</div>
+            <div style={{fontSize:12,color:D.t2}}>📧 Email notifications</div>
             <div onClick={async()=>{
-              const newVal=!c.sms_notifications;
-              await sb.from("collaborators").update({sms_notifications:newVal}).eq("id",c.id);
-              setCollabs(prev=>prev.map(x=>x.id===c.id?{...x,sms_notifications:newVal}:x));
-            }} style={{width:36,height:20,borderRadius:10,cursor:"pointer",background:c.sms_notifications?D.green:D.bg3,position:"relative",transition:"background 0.2s",flexShrink:0}}>
-              <div style={{position:"absolute",top:2,left:c.sms_notifications?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+              const newVal=!c.email_notifications;
+              await sb.from("collaborators").update({email_notifications:newVal}).eq("id",c.id);
+              setCollabs(prev=>prev.map(x=>x.id===c.id?{...x,email_notifications:newVal}:x));
+            }} style={{width:36,height:20,borderRadius:10,cursor:"pointer",background:c.email_notifications?D.green:D.bg3,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+              <div style={{position:"absolute",top:2,left:c.email_notifications?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
             </div>
           </div>
         </div>
@@ -778,15 +778,15 @@ function AccountEditor({user,companyProfile,setCompanyProfile}){
       </div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0 0",marginTop:12,borderTop:`1px solid ${D.b1}`}}>
         <div>
-          <div style={{fontSize:14,color:D.t1,fontWeight:500}}>📱 Text Notifications</div>
-          <div style={{fontSize:12,color:D.t3,marginTop:2}}>Receive texts when items are added or accepted</div>
+          <div style={{fontSize:14,color:D.t1,fontWeight:500}}>📧 Email Notifications</div>
+          <div style={{fontSize:12,color:D.t3,marginTop:2}}>Receive emails when items are added or accepted</div>
         </div>
         <div onClick={async()=>{
-          const newVal=!companyProfile?.sms_notifications;
-          setCompanyProfile(p=>({...p,sms_notifications:newVal}));
-          await sb.from("company_profile").update({sms_notifications:newVal}).eq("user_id",user.id);
-        }} style={{width:44,height:24,borderRadius:12,cursor:"pointer",background:companyProfile?.sms_notifications?D.green:D.bg3,position:"relative",transition:"background 0.2s",flexShrink:0}}>
-          <div style={{position:"absolute",top:2,left:companyProfile?.sms_notifications?22:2,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+          const newVal=!companyProfile?.email_notifications;
+          setCompanyProfile(p=>({...p,email_notifications:newVal}));
+          await sb.from("company_profile").update({email_notifications:newVal}).eq("user_id",user.id);
+        }} style={{width:44,height:24,borderRadius:12,cursor:"pointer",background:companyProfile?.email_notifications?D.green:D.bg3,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+          <div style={{position:"absolute",top:2,left:companyProfile?.email_notifications?22:2,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
         </div>
       </div>
     </div>
@@ -3338,7 +3338,7 @@ function MainApp({user,onLogout}){
         areas:(p.areas||[]).sort((a,b)=>a.sort_order-b.sort_order).map(a=>({id:a.id,name:a.name,section:a.section,sort_order:a.sort_order})),
         clientLogoUrl:p.client_logo_url||null,
         shareToken:p.share_token||null,
-        smsAddedMessage:p.sms_added_message||"",smsAcceptedMessage:p.sms_accepted_message||"",
+        emailAddedMessage:p.email_added_message||"",emailAcceptedMessage:p.email_accepted_message||"",
         items:[],
       })));
     }
@@ -3450,7 +3450,7 @@ function MainApp({user,onLogout}){
         }
         const createdItem={id:newItem.id,num,title:form.title,trade:form.trade,area:form.area,assignedTo:form.assignedTo,priority:form.priority,status:"open",comments:form.comments,list_type:listType,photos:finalPhotos.map(p=>({path:p.path,url:p.url}))};
         setProjItems(prev=>[...prev,createdItem]);
-        sendSmsNotification(projId,form.title,"added");
+        sendEmailNotification(projId,form.title,"added");
       }
 
       if(multiMode){
@@ -3486,7 +3486,7 @@ function MainApp({user,onLogout}){
     // Optimistic update
     setProjItems(prev=>prev.map(i=>i.id===itemId?{...i,status:newStatus}:i));
     await sb.from("items").update({status:newStatus}).eq("id",itemId);
-    if(newStatus==="accepted") sendSmsNotification(projId,item.title,"accepted");
+    if(newStatus==="accepted") sendEmailNotification(projId,item.title,"accepted");
     // When reopened from accepted — switch back to all so it's visible
     if(newStatus==="open" && item.status==="accepted") setFStatus("all");
   };
@@ -3546,7 +3546,7 @@ function MainApp({user,onLogout}){
     setProjects(prev=>prev.map(p=>p.id!==projId?p:{...p,areas:(p.areas||[]).filter(a=>a.id!==areaId)}));
   };
   const updateProjectField=async(field,value)=>{
-    const dbField={name:"name",clientName:"client_name",address:"address",projectNumber:"project_number",smsAddedMessage:"sms_added_message",smsAcceptedMessage:"sms_accepted_message"}[field];
+    const dbField={name:"name",clientName:"client_name",address:"address",projectNumber:"project_number",emailAddedMessage:"email_added_message",emailAcceptedMessage:"email_accepted_message"}[field];
     if(!dbField)return;
     await sb.from("projects").update({[dbField]:value||null}).eq("id",projId);
     setProjects(prev=>prev.map(p=>p.id!==projId?p:{...p,[field]:value}));
@@ -3748,7 +3748,7 @@ function MainApp({user,onLogout}){
                     console.error("Photo upload failed for item:",newItem.id,photoErr.message);
                   }
                 }
-                sendSmsNotification(projId,item.title,"added");
+                sendEmailNotification(projId,item.title,"added");
                 nextNum++;
               }
             }catch(e){console.error("Failed to save item:",e);}
@@ -3935,22 +3935,22 @@ function MainApp({user,onLogout}){
             <div style={{fontSize:14,fontWeight:700,color:D.red,marginBottom:12}}>Danger Zone</div>
             <button onClick={()=>setConfirm({type:"project",id:proj.id,label:proj.name})} style={{padding:"10px 16px",borderRadius:10,background:D.redBg,border:"1px solid rgba(248,81,73,0.3)",color:D.red,fontWeight:600,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}><Trash2 size={15}/> Delete Project</button>
           </div>
-          {/* ── SMS NOTIFICATION MESSAGES ── */}
+          {/* ── EMAIL NOTIFICATION MESSAGES ── */}
           <div style={{marginTop:8,padding:"0 16px",marginBottom:16}}>
-            <div style={{fontSize:11,fontWeight:700,color:D.t3,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>SMS Notification Messages</div>
+            <div style={{fontSize:11,fontWeight:700,color:D.t3,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:12}}>Email Notification Messages</div>
             <div style={{background:D.bg2,borderRadius:12,padding:14,border:`1px solid ${D.b1}`}}>
               <div style={{fontSize:12,color:D.t3,marginBottom:12,lineHeight:1.6}}>
                 Use <strong style={{color:D.t1}}>{"{project}"}</strong> for project name and <strong style={{color:D.t1}}>{"{item}"}</strong> for item title.
               </div>
               <div style={{marginBottom:12}}>
                 <div style={{fontSize:11,fontWeight:600,color:D.t3,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>When Item Is Added</div>
-                <input value={proj.smsAddedMessage||""} onChange={e=>updateProjectField("smsAddedMessage",e.target.value)} style={{...dInp(),width:"100%"}} placeholder="New item added to {project}: {item}"/>
+                <input value={proj.emailAddedMessage||""} onChange={e=>updateProjectField("emailAddedMessage",e.target.value)} style={{...dInp(),width:"100%"}} placeholder="New item added to {project}: {item}"/>
               </div>
               <div>
                 <div style={{fontSize:11,fontWeight:600,color:D.t3,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>When Item Is Accepted / Closed Out</div>
-                <input value={proj.smsAcceptedMessage||""} onChange={e=>updateProjectField("smsAcceptedMessage",e.target.value)} style={{...dInp(),width:"100%"}} placeholder="Item closed out on {project}: {item}"/>
+                <input value={proj.emailAcceptedMessage||""} onChange={e=>updateProjectField("emailAcceptedMessage",e.target.value)} style={{...dInp(),width:"100%"}} placeholder="Item closed out on {project}: {item}"/>
               </div>
-              <div style={{fontSize:11,color:D.t3,marginTop:10}}>Messages send to you and any collaborators with SMS notifications enabled.</div>
+              <div style={{fontSize:11,color:D.t3,marginTop:10}}>Messages send to you and any collaborators with email notifications enabled.</div>
             </div>
           </div>
           {/* ── COLLABORATORS ── */}
